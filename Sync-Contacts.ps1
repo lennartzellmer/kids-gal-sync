@@ -19,10 +19,10 @@ if ($LogPath) {
 }
 
 Write-Verbose "Using $(If ($UseGraphSDK) {"Graph SDK"} Else {"raw REST requests"}) for connection"
-If ($UseGraphSDK) { Import-Module Microsoft.Graph.PersonalContacts }
+If ($UseGraphSDK) { Import-Module Microsoft.Graph.PersonalContacts -WarningAction SilentlyContinue }
 
-Import-Module .\Module\GAL-Sync.psm1 -Force
-Connect-GALSync -CredentialFile $CredentialPath -Tenant $Tenant
+Import-Module .\Module\GAL-Sync.psm1 -Force -WarningAction SilentlyContinue
+$null = Connect-GALSync -CredentialFile $CredentialPath -Tenant $Tenant
 
 # Get users based on input
 if ($Directory) { $mailBoxesToSync = (Get-GALContacts -ContactsWithoutPhoneNumber $true).emailaddresses | Select-Object -ExpandProperty address }
