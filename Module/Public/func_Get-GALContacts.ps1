@@ -6,10 +6,21 @@ function Get-GALContacts {
     )
     try {
         Write-VerboseEvent "Getting GAL contacts"
+        $selectProps = @(
+            "displayName",
+            "givenName",
+            "surname",
+            "jobTitle",
+            "department",
+            "mail",
+            "businessPhones",
+            "mobilePhone",
+            "onPremisesExtensionAttributes"
+        ) -join ","
         $allContacts = if ($UseGraphSDK) {
-            Get-MgUser -All
+            Get-MgUser -All -Property $selectProps
         } else {
-            New-GraphRequest -Endpoint "/users?`$select=*&`$top=999" -Beta
+            New-GraphRequest -Endpoint "/users?`$select=$selectProps&`$top=999" -Beta
         }
         if (-not $ContactsWithoutPhoneNumber) {
             $allContacts = $allContacts | Where-Object { $_.businessPhones -or $_.mobilePhone }
@@ -19,13 +30,34 @@ function Get-GALContacts {
         }
         $returnObject = @()
         $allContacts | ForEach-Object {
+            $extensionAttribute1 = $null
+            if ($_.onPremisesExtensionAttributes) {
+                $extensionAttribute1 = $_.onPremisesExtensionAttributes.extensionAttribute1
+            }
+            elseif ($_.extensionAttribute1) {
+                $extensionAttribute1 = $_.extensionAttribute1
+            }
+            $surnameWithChildren = $_.surname
+            if ($extensionAttribute1) {
+                $childrenNames = $extensionAttribute1 -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+                if ($childrenNames.Count -gt 0) {
+                    $suffix = if ($childrenNames.Count -eq 1) {
+                        " ($($childrenNames[0]))"
+                    }
+                    else {
+                        " ($($childrenNames -join ' & '))"
+                    }
+                    $surnameWithChildren = if ([string]::IsNullOrWhiteSpace($_.surname)) { $suffix.Trim() } else { "$($_.surname)$suffix" }
+                }
+            }
             $returnObject += [pscustomobject]@{
                 businessPhones = $_.businessPhones
                 displayname    = $_.displayName
                 givenName      = $_.givenName
-                surname        = $_.surname
+                surname        = $surnameWithChildren
                 jobTitle       = $_.jobTitle                
                 department     = $_.department
+                personalNotes  = $extensionAttribute1
                 # homePhones     = if (-not $_.homePhones) { @() } else { @($_.homePhones) }
                 emailAddresses = @(@{
                         name    = $_.mail

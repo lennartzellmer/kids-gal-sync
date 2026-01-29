@@ -11,6 +11,7 @@ function Update-FolderContact {
             jobTitle       = $Contact.jobTitle
             department     = $Contact.department
             emailAddresses = $Contact.emailAddresses
+            personalNotes  = $Contact.personalNotes
         }
         # add these based on pressence
         # if ($Contact.homePhones) { $updateContactBody.homePhones = $NewContact.homePhones }

@@ -12,6 +12,7 @@ function New-FolderContact {
         department     = $contact.department
         emailAddresses = $contact.emailAddresses
     }
+    if ($contact.personalNotes) { $contactBody.personalNotes = $contact.personalNotes }
     # add these based on pressence
     if ($contact.homePhones) { $contactBody.homePhones = $contact.homePhones }
     if ($contact.businessPhones) { $contactBody.businessPhones = $contact.businessPhones }
