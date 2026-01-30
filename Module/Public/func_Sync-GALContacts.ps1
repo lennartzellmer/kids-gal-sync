@@ -32,14 +32,59 @@ function Sync-GALContacts {
         throw "Failed to create contact folder $($ContactFolderName) in mailbox $($Mailbox)"
     }
 
-    if ($contactsInFolder) {
-        $removeContacts = @(
-            $contactsInFolder | Where-Object { $_.displayName -notin $ContactList.displayName }
+    function Get-ContactPrimaryEmail {
+        param (
+            [parameter(Mandatory)][object]$Contact
         )
-        # Remove contacts that have duplicate displayNames. This is the only way to correctly sync
-        # contacts when using displayName as the "primary key"
+        if ($Contact.emailAddresses) {
+            $address = $Contact.emailAddresses |
+                ForEach-Object { $_.address } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Select-Object -First 1
+            if ($address) { return $address.ToLowerInvariant() }
+        }
+        return $null
+    }
+
+    function Set-ContactNotesFromExtensionAttribute {
+        param (
+            [parameter(Mandatory)][object]$Contact
+        )
+        $extensionAttribute1 = $null
+        if ($Contact.onPremisesExtensionAttributes) {
+            $extensionAttribute1 = $Contact.onPremisesExtensionAttributes.extensionAttribute1
+        }
+        elseif ($Contact.extensionAttribute1) {
+            $extensionAttribute1 = $Contact.extensionAttribute1
+        }
+        if (-not [string]::IsNullOrWhiteSpace($extensionAttribute1)) {
+            $Contact | Add-Member -MemberType NoteProperty -Name "personalNotes" -Value $extensionAttribute1 -Force
+        }
+    }
+
+    if ($ContactList) {
+        $ContactList | ForEach-Object { Set-ContactNotesFromExtensionAttribute -Contact $_ }
+    }
+
+    if ($contactsInFolder) {
+        $contactListEmails = $ContactList | ForEach-Object { Get-ContactPrimaryEmail -Contact $_ } | Where-Object { $_ }
+        $removeContacts = @()
+        if ($contactListEmails) {
+            $removeContacts += @(
+                $contactsInFolder | Where-Object {
+                    $folderEmail = Get-ContactPrimaryEmail -Contact $_
+                    $folderEmail -and ($folderEmail -notin $contactListEmails)
+                }
+            )
+        }
+        # Remove contacts that have duplicate email addresses. This is the only way to correctly sync
+        # contacts when using email address as the "primary key"
         $removeContacts += @(
-            $contactsInFolder | Group-Object displayName | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Group }
+            $contactsInFolder |
+                Where-Object { Get-ContactPrimaryEmail -Contact $_ } |
+                Group-Object { Get-ContactPrimaryEmail -Contact $_ } |
+                Where-Object { $_.Count -gt 1 } |
+                ForEach-Object { $_.Group }
         )
 
         if ($removeContacts) {
@@ -62,59 +107,19 @@ function Sync-GALContacts {
             throw "Failed to create contact folder $($ContactFolderName) in mailbox $($Mailbox)"
         }
 
-        function Check-Contact {
-            [CmdletBinding()]
-            param (
-                $ContactInFolder,
-                $Contact
-            )
-            # loop over the properties in each contact
-            foreach ($property in $ContactInFolder.PSObject.Properties) {
-                $name = $property.name
-                $contactListValue = $contact.$name
-                $folderContactValue = $property.value
-
-                if ($name -ne "id") {
-                    if ($folderContactValue -is [array] -and $name -eq "emailAddresses") {
-                        $folderContactHashes = @()
-                        $folderContactValue | ForEach-Object {
-                            $folderContactHashes += @{
-                                name = $_.name
-                                address = $_.address
-                            }
-                        }
-                        $difference = Compare-Object $contactListValue $folderContactHashes
-                        if ($null -ne $difference) {
-                            Write-Verbose "$name is different"
-                            $returnContact = $contact
-                        }
-                    }
-                    elseif ($contactListValue -ne $folderContactValue) {
-                        if (-not [string]::IsNullOrEmpty($contactListValue) -and -not [string]::IsNullOrEmpty($folderContactValue)) {
-                            Write-Verbose "$name is different"
-                            $returnContact = $contact
-                        }
-                    }
-                }
-            }
-            if ($null -ne $returnContact) {
-                $returnContact | Add-Member -MemberType NoteProperty -Name "id" -Value $ContactInFolder.id -Force
-                return $returnContact
-            }
-            else {
-                return $null
-            }
-        }
-
         # foreach loop over the contactlist to compare to contacts in folder
         $updateContacts = @()
         foreach ($contact in $ContactList) {
-            # find matching contact
-            $folderContact = $contactsInFolder | Where-Object { $_.displayName -eq $contact.displayname }
+            # find matching contact by primary email
+            $contactEmail = Get-ContactPrimaryEmail -Contact $contact
+            if (-not $contactEmail) { continue }
+            $folderContact = $contactsInFolder | Where-Object {
+                (Get-ContactPrimaryEmail -Contact $_) -eq $contactEmail
+            } | Select-Object -First 1
             if ($folderContact) {
-                Write-Verbose "Checking contact $($contact.displayname)"
-                $checkedContact = Check-Contact -ContactInFolder $folderContact -Contact $contact
-                if ($checkedContact) { $updateContacts += $checkedContact }
+                # Always update existing contacts to ensure changes are pushed each run
+                $contact | Add-Member -MemberType NoteProperty -Name "id" -Value $folderContact.id -Force
+                $updateContacts += $contact
             }
         }
 
@@ -143,7 +148,11 @@ function Sync-GALContacts {
         $newContacts = $ContactList
     }
     else {
-        $newContacts = $ContactList | Where-Object { $_.displayName -notin $contactsInFolder.displayName }
+        $folderEmails = $contactsInFolder | ForEach-Object { Get-ContactPrimaryEmail -Contact $_ } | Where-Object { $_ }
+        $newContacts = $ContactList | Where-Object {
+            $contactEmail = Get-ContactPrimaryEmail -Contact $_
+            $contactEmail -and ($contactEmail -notin $folderEmails)
+        }
     }
 
     if ($newContacts) {
